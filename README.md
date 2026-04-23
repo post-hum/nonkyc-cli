@@ -1,5 +1,5 @@
 # nonkyc-cli
-
+![nonkyc-cli Screenshot](screenshot.png)
 Lightweight CLI + TUI trading terminal for NonKYC exchange.
 
 ## Features
