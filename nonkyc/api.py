@@ -2,6 +2,7 @@ import os
 import time
 import hmac
 import hashlib
+import json
 from urllib.parse import urlparse, parse_qsl, urlencode
 import requests
 from requests.adapters import HTTPAdapter
@@ -20,7 +21,7 @@ class NonKYCClient:
         if not self.api_key or not self.api_secret:
             raise ValueError("API_KEY and API_SECRET must be set in .env")
         
-        # Настраиваем сессию с повторами для устойчивости
+        # Настроим сессию с повторами для устойчивости
         self.session = requests.Session()
         retries = Retry(total=3, backoff_factor=0.3, status_forcelist=[500, 502, 503, 504])
         adapter = HTTPAdapter(max_retries=retries)
