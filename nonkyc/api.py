@@ -1,125 +1,118 @@
-import os, time, json, hmac, hashlib
-from decimal import Decimal
-from typing import List, Any
+import os
+import time
+import json
+import hmac
+import hashlib
 import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-from dotenv import load_dotenv
 
-# Базовый URL API NonKYC
+from nonkyc.utils import symbol_to_api
+
 BASE_URL = "https://api.nonkyc.io/api/v2"
 
+
 class NonKYCClient:
-    def __init__(self):
-        load_dotenv()  # Загружаем .env (API_KEY, API_SECRET)
-        self.api_key = os.getenv("API_KEY")
-        self.api_secret = os.getenv("API_SECRET")
-        if not self.api_key or not self.api_secret:
-            raise ValueError("API_KEY and API_SECRET must be set in .env")
-        # Настраиваем сессию с повторами для устойчивости
+    def __init__(self, api_key=None, api_secret=None):
         self.session = requests.Session()
-        retries = Retry(total=3, backoff_factor=0.3,
-                        status_forcelist=[500, 502, 503, 504])
-        adapter = HTTPAdapter(max_retries=retries)
-        self.session.mount("https://", adapter)
         self.timeout = 10
 
-    def _sign_headers(self, url: str, body: str = "") -> dict:
-        """
-        Собираем HMAC-SHA256 подпись для запроса в соответствии с документацией NonKYC.
-        Подписание: concat(API_KEY, URL, body, nonce) -> HMAC_SHA256 -> signature.
-        """
+        self.api_key = api_key or os.getenv("NONKYC_API_KEY")
+        self.api_secret = api_secret or os.getenv("NONKYC_API_SECRET")
+
+    # -------------------------
+    # AUTH CORE
+    # -------------------------
+    def _sign(self, url: str, body: str = ""):
+        if not self.api_key or not self.api_secret:
+            raise ValueError("Missing API credentials")
+
         nonce = str(int(time.time() * 1000))
-        data = f"{self.api_key}{url}{body}{nonce}"
-        signature = hmac.new(self.api_secret.encode(), data.encode(), hashlib.sha256).hexdigest()
-        return {
+
+        payload = f"{self.api_key}{url}{body}{nonce}"
+        signature = hmac.new(
+            self.api_secret.encode(),
+            payload.encode(),
+            hashlib.sha256
+        ).hexdigest()
+
+        headers = {
             "X-API-KEY": self.api_key,
             "X-API-NONCE": nonce,
             "X-API-SIGN": signature,
             "Content-Type": "application/json"
         }
 
-    def get_orderbook(self, symbol: str, limit: int = 50) -> dict:
-        """GET /market/orderbook (публичный)."""
-        url = f"{BASE_URL}/market/orderbook"
-        params = {"symbol": symbol, "limit": limit}
-        resp = self.session.get(url, params=params, timeout=self.timeout)
-        resp.raise_for_status()
-        data = resp.json()
-        # Приводим цены и кол-во к Decimal
-        for side in ["bids", "asks"]:
-            for item in data.get(side, []):
-                item["price"] = Decimal(item["price"])
-                item["quantity"] = Decimal(item["quantity"])
-        return data
+        return headers
 
-    def get_candles(self, symbol: str, resolution: int = 5, count_back: int = 50) -> dict:
-        """GET /market/candles (публичный)."""
-        url = f"{BASE_URL}/market/candles"
-        params = {"symbol": symbol, "resolution": resolution, "countBack": count_back, "firstDataRequest": 1}
-        resp = self.session.get(url, params=params, timeout=self.timeout)
-        resp.raise_for_status()
-        data = resp.json()
-        # Convert string fields to Decimal
-        for bar in data.get("bars", []):
-            for k in ("open", "high", "low", "close", "volume"):
-                bar[k] = Decimal(str(bar[k]))
-        return data
+    def _get(self, path, params=None):
+        url = f"{BASE_URL}{path}"
+        r = self.session.get(url, params=params, timeout=self.timeout)
+        r.raise_for_status()
+        return r.json()
 
-    def get_balance(self) -> List[dict]:
-        """GET /balances (приватный)."""
-        url = f"{BASE_URL}/balances"
-        headers = self._sign_headers(url)
-        resp = self.session.get(url, headers=headers, timeout=self.timeout)
-        resp.raise_for_status()
-        balances = resp.json()
-        # Приводим к Decimal (str) для безопасного вывода
-        for b in balances:
-            for field in ("available", "pending", "held"):
-                b[field] = Decimal(b.get(field, "0") or "0")
-        return balances
+    def _post(self, path, body=None, signed=False):
+        url = f"{BASE_URL}{path}"
+        body_json = json.dumps(body or {}, separators=(',', ':'))
 
-    def get_orders(self, symbol: str = None) -> List[dict]:
-        """GET /account/orders (приватный). Можно фильтровать по symbol."""
-        url = f"{BASE_URL}/account/orders"
+        headers = {}
+
+        if signed:
+            headers = self._sign(url, body_json)
+
+        r = self.session.post(url, data=body_json, headers=headers, timeout=self.timeout)
+        r.raise_for_status()
+        return r.json()
+
+    # -------------------------
+    # PUBLIC
+    # -------------------------
+    def get_ticker(self, symbol: str):
+        return self._get("/ticker/" + symbol_to_api(symbol))
+
+    def get_orderbook(self, symbol: str, limit=20):
+        return self._get("/market/orderbook", {
+            "symbol": symbol,
+            "limit": limit
+        })
+
+    def get_candles(self, symbol: str, resolution=5, count_back=50):
+        return self._get("/market/candles", {
+            "symbol": symbol,
+            "resolution": resolution,
+            "countBack": count_back,
+            "firstDataRequest": 1
+        })
+
+    # -------------------------
+    # PRIVATE (AUTH REQUIRED)
+    # -------------------------
+    def get_orders(self, symbol=None, status=None):
         params = {}
         if symbol:
             params["symbol"] = symbol
-        headers = self._sign_headers(url + ("?" + "&".join(f"{k}={v}" for k,v in params.items()) if params else ""), "")
-        resp = self.session.get(url, params=params, headers=headers, timeout=self.timeout)
-        resp.raise_for_status()
-        orders = resp.json()
-        # Decimal-парсинг
-        for o in orders:
-            o["price"] = Decimal(o.get("price", "0") or "0")
-            o["quantity"] = Decimal(o.get("quantity", "0") or "0")
-            o["executedQuantity"] = Decimal(o.get("executedQuantity", "0") or "0")
-        return orders
+        if status:
+            params["status"] = status
 
-    def create_order(self, symbol: str, side: str, otype: str, quantity: Decimal, price: Decimal = None) -> dict:
-        """POST /createorder (приватный). Тип: 'limit' или 'market'."""
-        url = f"{BASE_URL}/createorder"
-        payload = {
-            "symbol": symbol,
-            "side": side.lower(),
-            "type": otype,
-            "quantity": str(quantity)
+        return self._get("/account/orders", params)
+
+    def get_balances(self):
+        return self._get("/balances")
+
+    def create_order(self, symbol, side, order_type, quantity, price=None):
+        body = {
+            "symbol": symbol_to_api(symbol),
+            "side": side,
+            "type": order_type,
+            "quantity": str(quantity),
         }
-        if price is not None:
-            payload["price"] = str(price)
-        body = json.dumps(payload, separators=(',', ':'))
-        headers = self._sign_headers(url, body)
-        resp = self.session.post(url, data=body, headers=headers, timeout=self.timeout)
-        resp.raise_for_status()
-        result = resp.json()
-        return result
+        if price:
+            body["price"] = str(price)
 
-    def cancel_order(self, order_id: str) -> dict:
-        """POST /cancelorder (приватный)."""
-        url = f"{BASE_URL}/cancelorder"
-        payload = {"id": order_id}
-        body = json.dumps(payload)
-        headers = self._sign_headers(url, body)
-        resp = self.session.post(url, data=body, headers=headers, timeout=self.timeout)
-        resp.raise_for_status()
-        return resp.json()
+        return self._post("/createorder", body, signed=True)
+
+    def cancel_order(self, order_id: str):
+        return self._post("/cancelorder", {"id": order_id}, signed=True)
+
+    def cancel_all(self, symbol: str):
+        return self._post("/cancelallorders", {
+            "symbol": symbol_to_api(symbol)
+        }, signed=True)
