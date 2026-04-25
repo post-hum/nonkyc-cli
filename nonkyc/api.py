@@ -9,7 +9,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from dotenv import load_dotenv
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse, parse_qsl
 
 # Базовый URL API NonKYC
 BASE_URL = "https://api.nonkyc.io/api/v2"
@@ -35,10 +35,16 @@ class NonKYCClient:
         Подписание: concat(API_KEY, URL, body, nonce) -> HMAC_SHA256 -> signature.
         """
         nonce = str(int(time.time() * 1000))
-        # Формируем строку для подписи (используем url без query-параметров и затем добавляем параметры)
-        query_string = urlencode(sorted(url.split("?")[1].split("&"))) if '?' in url else ''
-        data = f"{self.api_key}{url.split('?')[0]}{query_string}{body}{nonce}"
+        parsed_url = urlparse(url)
+        
+        # Извлекаем query параметры и сортируем их
+        query_params = dict(parse_qsl(parsed_url.query))
+        sorted_query = urlencode(sorted(query_params.items()))
+        
+        # Формируем строку для подписи
+        data = f"{self.api_key}{parsed_url.path}{sorted_query}{body}{nonce}"
         signature = hmac.new(self.api_secret.encode(), data.encode(), hashlib.sha256).hexdigest()
+        
         return {
             "X-API-KEY": self.api_key,
             "X-API-NONCE": nonce,
