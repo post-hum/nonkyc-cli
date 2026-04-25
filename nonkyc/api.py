@@ -2,12 +2,13 @@ import os
 import time
 import hmac
 import hashlib
-from urllib.parse import urlparse, parse_qsl, urlencode
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from dotenv import load_dotenv
+from urllib.parse import urlparse, parse_qsl, urlencode
 from decimal import Decimal
+import json
 
 # Базовый URL API NonKYC
 BASE_URL = "https://api.nonkyc.io/api/v2"
@@ -134,3 +135,16 @@ class NonKYCClient:
         resp = self.session.post(url, data=body, headers=headers, timeout=self.timeout)
         resp.raise_for_status()
         return resp.json()
+
+    def get_candles(self, symbol: str, resolution: int = 5, count_back: int = 50) -> dict:
+        """GET /market/candles (публичный)."""
+        url = f"{BASE_URL}/market/candles"
+        params = {"symbol": symbol, "resolution": resolution, "countBack": count_back, "firstDataRequest": 1}
+        resp = self.session.get(url, params=params, timeout=self.timeout)
+        resp.raise_for_status()
+        data = resp.json()
+        # Преобразуем данные о свечах
+        for bar in data.get("bars", []):
+            for k in ("open", "high", "low", "close", "volume"):
+                bar[k] = Decimal(str(bar[k]))
+        return data
