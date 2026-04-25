@@ -1,12 +1,12 @@
-from decimal import Decimal, InvalidOperation
-
 def normalize_symbol(symbol: str) -> str:
-    """Normalize symbol to API format (e.g. BTC/USDT -> BTC_USDT)."""
-    return symbol.replace("/", "_").upper()
+    """
+    API NonKYC принимает оба формата, но лучше унифицировать.
+    """
+    return symbol.replace("-", "/").replace("_", "/").upper()
 
-def to_decimal(x) -> Decimal:
-    """Convert a value (str/float) to Decimal, default 0 on error."""
-    try:
-        return Decimal(str(x))
-    except (InvalidOperation, TypeError):
-        return Decimal(0)
+
+def symbol_to_api(symbol: str) -> str:
+    """
+    Иногда API хочет BTC_USDT
+    """
+    return symbol.replace("/", "_").upper()
