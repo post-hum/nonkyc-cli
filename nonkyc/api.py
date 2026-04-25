@@ -2,7 +2,6 @@ import os
 import time
 import hmac
 import hashlib
-import json
 from urllib.parse import urlparse, parse_qsl, urlencode
 import requests
 from requests.adapters import HTTPAdapter
@@ -135,21 +134,3 @@ class NonKYCClient:
         resp = self.session.post(url, data=body, headers=headers, timeout=self.timeout)
         resp.raise_for_status()
         return resp.json()
-
-    def get_candles(self, symbol: str, resolution: int = 5, count_back: int = 50) -> dict:
-        """GET /market/candles (публичный)."""
-        symbol = symbol.replace("/", "_").upper()  # Заменяем / на _
-        url = f"{BASE_URL}/market/candles"
-        params = {"symbol": symbol, "resolution": resolution, "countBack": count_back, "firstDataRequest": 1}
-        
-        # Формируем запрос с параметрами
-        resp = self.session.get(url, params=params, timeout=self.timeout)
-        resp.raise_for_status()  # Проверяем на ошибки
-        data = resp.json()
-
-        # Приводим данные о свечах к Decimal
-        for bar in data.get("bars", []):
-            for k in ("open", "high", "low", "close", "volume"):
-                bar[k] = Decimal(str(bar[k]))
-
-        return data
