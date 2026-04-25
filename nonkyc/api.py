@@ -1,15 +1,13 @@
 import os
 import time
-import json
 import hmac
 import hashlib
-from decimal import Decimal
-from typing import List, Any
+from urllib.parse import urlparse, parse_qsl, urlencode
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from dotenv import load_dotenv
-from urllib.parse import urlencode, urlparse, parse_qsl
+from decimal import Decimal
 
 # Базовый URL API NonKYC
 BASE_URL = "https://api.nonkyc.io/api/v2"
@@ -21,10 +19,10 @@ class NonKYCClient:
         self.api_secret = os.getenv("API_SECRET")
         if not self.api_key or not self.api_secret:
             raise ValueError("API_KEY and API_SECRET must be set in .env")
+        
         # Настраиваем сессию с повторами для устойчивости
         self.session = requests.Session()
-        retries = Retry(total=3, backoff_factor=0.3,
-                        status_forcelist=[500, 502, 503, 504])
+        retries = Retry(total=3, backoff_factor=0.3, status_forcelist=[500, 502, 503, 504])
         adapter = HTTPAdapter(max_retries=retries)
         self.session.mount("https://", adapter)
         self.timeout = 10
@@ -34,16 +32,24 @@ class NonKYCClient:
         Собираем HMAC-SHA256 подпись для запроса в соответствии с документацией NonKYC.
         Подписание: concat(API_KEY, URL, body, nonce) -> HMAC_SHA256 -> signature.
         """
-        nonce = str(int(time.time() * 1000))
+        nonce = str(int(time.time() * 1000))  # Генерируем уникальный nonce
+
+        # Формируем URL с правильным символом _ вместо /
         parsed_url = urlparse(url)
-        
-        # Извлекаем query параметры и сортируем их
         query_params = dict(parse_qsl(parsed_url.query))
-        sorted_query = urlencode(sorted(query_params.items()))
-        
+        sorted_query = urlencode(sorted(query_params.items()))  # Сортируем параметры запроса
+
         # Формируем строку для подписи
         data = f"{self.api_key}{parsed_url.path}{sorted_query}{body}{nonce}"
+
+        # Логирование для отладки
+        print(f"Signing data: {data}")  # Логирование строки для подписи
+
+        # Вычисляем подпись с использованием HMAC SHA256
         signature = hmac.new(self.api_secret.encode(), data.encode(), hashlib.sha256).hexdigest()
+
+        # Логирование для отладки
+        print(f"Signature: {signature}")
         
         return {
             "X-API-KEY": self.api_key,
@@ -54,32 +60,24 @@ class NonKYCClient:
 
     def get_orderbook(self, symbol: str, limit: int = 50) -> dict:
         """GET /market/orderbook (публичный)."""
+        symbol = symbol.replace("/", "_").upper()  # Заменяем / на _
         url = f"{BASE_URL}/market/orderbook"
         params = {"symbol": symbol, "limit": limit}
+        
+        # Формируем запрос с параметрами
         resp = self.session.get(url, params=params, timeout=self.timeout)
-        resp.raise_for_status()
+        resp.raise_for_status()  # Проверяем на ошибки
         data = resp.json()
+
         # Приводим цены и кол-во к Decimal
         for side in ["bids", "asks"]:
             for item in data.get(side, []):
                 item["price"] = Decimal(item["price"])
                 item["quantity"] = Decimal(item["quantity"])
+
         return data
 
-    def get_candles(self, symbol: str, resolution: int = 5, count_back: int = 50) -> dict:
-        """GET /market/candles (публичный)."""
-        url = f"{BASE_URL}/market/candles"
-        params = {"symbol": symbol, "resolution": resolution, "countBack": count_back, "firstDataRequest": 1}
-        resp = self.session.get(url, params=params, timeout=self.timeout)
-        resp.raise_for_status()
-        data = resp.json()
-        # Convert string fields to Decimal
-        for bar in data.get("bars", []):
-            for k in ("open", "high", "low", "close", "volume"):
-                bar[k] = Decimal(str(bar[k]))
-        return data
-
-    def get_balance(self) -> List[dict]:
+    def get_balance(self) -> list:
         """GET /balances (приватный)."""
         url = f"{BASE_URL}/balances"
         headers = self._sign_headers(url)
@@ -92,7 +90,7 @@ class NonKYCClient:
                 b[field] = Decimal(b.get(field, "0") or "0")
         return balances
 
-    def get_orders(self, symbol: str = None) -> List[dict]:
+    def get_orders(self, symbol: str = None) -> list:
         """GET /account/orders (приватный). Можно фильтровать по symbol."""
         url = f"{BASE_URL}/account/orders"
         params = {}
