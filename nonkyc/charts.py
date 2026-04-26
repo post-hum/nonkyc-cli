@@ -1,74 +1,127 @@
-from typing import List
-from rich.text import Text
+from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
+from rich.text import Text
+from typing import List
+from .models import Ticker, Balance, Order, Candle
 
-def candle_ascii(candles: List[dict], width=60, height=20) -> Text:
-    """
-    Рисует ASCII-Chart свечей (каждая свеча одним столбцом).
-    """
-    if not candles:
-        return Text("No data", style="dim")
-    candles = candles[-width:]
-    highs = [float(c["high"]) for c in candles]
-    lows = [float(c["low"]) for c in candles]
-    max_h, min_l = max(highs), min(lows)
-    rng = max_h - min_l or 1
-    def scale(p): return int((p - min_l) / rng * height)
-    canvas = [[" " for _ in range(len(candles))] for _ in range(height+1)]
-    for i, c in enumerate(candles):
-        o, h, l, cl = float(c["open"]), float(c["high"]), float(c["low"]), float(c["close"])
-        top = height - scale(h)
-        bottom = height - scale(l)
-        body_top = height - scale(max(o, cl))
-        body_bottom = height - scale(min(o, cl))
-        # Рисуем тень
-        for y in range(top, bottom+1):
-            canvas[y][i] = "│"
-        # Рисуем тело свечи
-        if body_top == body_bottom:  # если тело 0 (doji)
-            canvas[body_top][i] = "─"
-        else:
-            for y in range(body_top, body_bottom+1):
-                canvas[y][i] = "█"
-    text = Text()
-    for row in canvas:
-        text.append("".join(row) + "\n")
-    return text
+console = Console()
 
-def display_balance(balances: List[Any]):
-    """
-    Форматированный вывод балансов (Rich Table).
-    """
+def display_ticker(ticker: Ticker):
+    table = Table(title=f"{ticker.symbol}")
+    table.add_column("Bid", justify="right", style="bright_green")
+    table.add_column("Ask", justify="right", style="bright_red")
+    table.add_column("Last", justify="right", style="bold")
+    table.add_column("24h %", justify="right")
+    table.add_column("Volume", justify="right")
+
+    change_style = "bright_green" if ticker.change_24h >= 0 else "bright_red"
+    change_symbol = "▲" if ticker.change_24h >= 0 else "▼"
+
+    table.add_row(
+        f"{ticker.bid:.6f}",
+        f"{ticker.ask:.6f}",
+        f"{ticker.last:.6f}",
+        f"[{change_style}]{change_symbol} {abs(ticker.change_24h):.2f}%[/{change_style}]",
+        f"{ticker.volume_24h:.0f}"
+    )
+    console.print(table)
+
+def display_balance(balances: List[Balance]):
     table = Table(title="Balance")
-    table.add_column("Asset", justify="left")
-    table.add_column("Total", justify="right")
-    table.add_column("Available", justify="right")
-    for b in balances:
-        asset = b.get("asset")
-        total = str(b.get("available", 0))
-        held = str(b.get("held", 0))
-        table.add_row(asset, total, held)
-    return table
+    table.add_column("Asset")
+    table.add_column("Free", justify="right")
+    table.add_column("Locked", justify="right")
+    table.add_column("Total", justify="right", style="bold")
 
-def display_orders(orders: List[Any]):
-    """
-    Форматированный вывод открытых ордеров (Rich Table).
-    """
+    for b in balances:
+        if b.total > 0:
+            table.add_row(
+                b.asset,
+                f"{b.free:.4f}",
+                f"{b.locked:.4f}",
+                f"{b.total:.4f}"
+            )
+    console.print(table)
+
+def display_orders(orders: List[Order]):
     if not orders:
-        return Text("No open orders", style="dim")
-    table = Table(title="Open Orders")
+        console.print("No open orders", style="dim")
+        return
+
+    table = Table(title="Orders")
     table.add_column("ID")
     table.add_column("Symbol")
     table.add_column("Side")
     table.add_column("Price", justify="right")
-    table.add_column("Quantity", justify="right")
+    table.add_column("Amount", justify="right")
+
     for o in orders:
+        side_style = "bright_green" if o.side.lower() == "buy" else "bright_red"
         table.add_row(
-            o.get("id","")[:8],
-            o.get("symbol",""),
-            o.get("side",""),
-            str(o.get("price","")),
-            str(o.get("quantity",""))
+            o.id[:8],
+            o.symbol,
+            f"[{side_style}]{o.side}[/{side_style}]",
+            f"{o.price:.6f}",
+            f"{o.amount:.4f}"
         )
-    return table
+    console.print(table)
+
+def display_orderbook(bids: list, asks: list, limit: int = 10):
+    table = Table(title="Order Book")
+    table.add_column("Bid Price", justify="right", style="bright_green")
+    table.add_column("Bid Amount", justify="right")
+    table.add_column("Ask Price", justify="right", style="bright_red")
+    table.add_column("Ask Amount", justify="right")
+
+    for i in range(limit):
+        bid = bids[i] if i < len(bids) else ("", "")
+        ask = asks[i] if i < len(asks) else ("", "")
+        table.add_row(
+            f"{bid[0]:.6f}" if bid[0] else "",
+            f"{bid[1]:.4f}" if bid[1] else "",
+            f"{ask[0]:.6f}" if ask[0] else "",
+            f"{ask[1]:.4f}" if ask[1] else ""
+        )
+    console.print(table)
+
+def draw_ascii_chart(prices: List[float], width: int = 50, height: int = 10):
+    if not prices:
+        console.print("No data", style="dim italic")
+        return
+
+    prices = prices[-width:]
+    mn, mx = min(prices), max(prices)
+    rng = mx - mn or 1
+
+    def price_to_row(p): return min(height, max(0, int((p - mn) / rng * height)))
+
+    lines = []
+    for row in range(height, -1, -1):
+        price_val = mn + (rng * row / height)
+        line = Text()
+        
+        if row % 2 == 0:
+            line.append(f"{price_val:8.2f} │ ", style="dim cyan")
+        else:
+            line.append(" " * 12)
+            
+        for i, p in enumerate(prices):
+            if i > 0:
+                prev = prices[i-1]
+                is_up = p >= prev
+                color = "bright_green" if is_up else "bright_red"
+                ch = "█" if abs(p - prev) > rng * 0.02 else "▒"
+                line.append(ch, style=color)
+            else:
+                line.append(" ")
+        lines.append(line)
+
+    result = Text()
+    for i, ln in enumerate(lines):
+        result.append(ln)
+        if i < len(lines) - 1:
+            result.append("\n")
+    result.append("\n" + " " * 12 + "└" + "─" * len(prices), style="dim")
+    
+    console.print(Panel(result, title="Price Chart", border_style="dim"))

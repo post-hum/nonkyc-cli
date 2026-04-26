@@ -11,7 +11,6 @@ console = Console()
 def cli():
     pass
 
-
 @cli.command()
 @click.argument('symbol')
 def price(symbol):
@@ -31,7 +30,6 @@ def price(symbol):
 
     console.print(table)
 
-
 @cli.command()
 def balance():
     client = NonKYCClient()
@@ -46,7 +44,6 @@ def balance():
             table.add_row(b.asset, f"{b.total:.4f}")
 
     console.print(table)
-
 
 @cli.command()
 @click.argument('symbol')
@@ -69,7 +66,6 @@ def orderbook(symbol, limit):
         )
 
     console.print(table)
-
 
 if __name__ == '__main__':
     cli()
